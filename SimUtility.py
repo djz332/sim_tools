@@ -84,7 +84,8 @@ def SetupPotentials(PBonds, PNonbonded, PElectrostatic, PExternal, atom_dict, mo
 
     Potentials_dict = {}
     print('\n...Setting Bmin to {}'.format(Bmin))
-    
+    print('\n...Setting cut off radius to {} nm'.format(rcut))
+
     for Sys in Sys_dict.values():
 
         #bonded interactions
@@ -113,8 +114,9 @@ def SetupPotentials(PBonds, PNonbonded, PElectrostatic, PExternal, atom_dict, mo
 
         #electrostatic potentials 
         if Electrostatics: #turn on ewald summation and smeared coulumb 
+            global Coef, BornA
             if (NeutralSrel and 'ElecSys_' in Sys.Name) or NeutralSrel == False:
-            
+                print('\n...Setting up Ewald summation with Bjerrum length: {} nm for {}'.format(Coef, Sys.Name))
                 P = sim.potential.Ewald(Sys, ExcludeBondOrd=0, Cut=rcut, Shift=Shift, Coef=Coef, FixedCoef=True, Label='ewald' )
                 Sys.ForceField.append(P)
 
@@ -549,12 +551,11 @@ if __name__ == "__main__":
     Bmin=None
     Electrostatics=False
     NeutralSrel=False 
-    Coef=None 
-    BornA=None 
+    Coef=1.0
+    BornA=1.0
     Shift=True
     Temp=1.0
     Pressure=0.0 
-    Tension=None,
     Axis=None 
     Tension=None 
     dt=0.1 
