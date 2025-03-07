@@ -37,7 +37,6 @@ class SimExporter():
         self.AngleEstimate=False
         self.SplineEstimate=False
         self.MinBondOrd=None
-        self.OptConstraints=None
 
         # initialize default empty arrays
         self.AtomTypes, self.MolTypes, self.Bonds = [], [], []
@@ -219,12 +218,12 @@ class SimExporter():
             
             #read in forcefield field
             if self.ForceFieldFile and os.path.exists(self.ForceFieldFile):
-                print('\n...Reading force field parameters from {} for {}'.format(self.ForceFieldFile, Sys.Name))
+                print('\n...Reading forcefield parameters from {} for {}'.format(self.ForceFieldFile, Sys.Name))
                 with open(self.ForceFieldFile, 'r') as of: s = of.read()
                 Sys.ForceField.SetParamString(s, CheckMissing = False)
 
         for Sys_name, Sys in self.Sys_dict.items():
-            print('\nForce field for {}: '.format(Sys_name))
+            print('\nForcefield for {}: '.format(Sys_name))
             for P in Sys.ForceField:
                 print(P.Label)
 
@@ -298,7 +297,7 @@ class SimExporter():
             if self.MapOp=='COM':
                 traj_name = system_traj_dict[Sys_entry[0]]
                 if not os.path.exists(trajfile_dict[traj_name][1]): 
-                    Warning(f'{trajfile_dict[traj_name][1]} topology file does not exits ... defaulting to centroid mapping')
+                    Warning('{} topology file does not exits ... defaulting to centroid mapping'.format(trajfile_dict[traj_name][1]))
                     masses=None
                 else:
                     traj = md.load(trajfile_dict[traj_name][0], top=trajfile_dict[traj_name][1])
@@ -309,10 +308,9 @@ class SimExporter():
                         masses=None 
             elif self.MapOp=='Centroid': masses = None 
 
-            #print(masses)
             Sys = self.Sys_dict[Sys_entry[0]]
             mapping = sim.atommap.PosMap()
-            
+        
             # finally build the mapping
             ia = 0
             shift = 0
@@ -321,17 +319,16 @@ class SimExporter():
                 for j in range(Sys_entry[2][i]): # number of CG molecules of type i
                     for k in range(1,len(molmap)):
                         atom = Sys.Atom[ia]
-                        aa_indices = list(molmap[k] + shift)
+                        aa_indices = molmap[k] + shift
                         if masses is not None: 
                             ia_masses = np.array([masses[ia] for ia in aa_indices])
-                            if (np.sum(ia_masses)==np.nan or np.sum(ia_masses)==0.0):
-                                Warning(f'Atom masses are not well defined for CG bead type {atom.Name} ... defaulting to centroid mapping')
-                                ia_masses=None
+                        if (np.sum(ia_masses)==np.nan or np.sum(ia_masses)==0.0):
+                            Warning('Atom masses are not well defined for CG bead type {} ... defaulting to centroid mapping'.format(atom.Name))
+                            ia_masses=None
                         else: 
                             ia_masses = None
-                       
                         mapping.Add(Atoms1=aa_indices, Atom2=atom, Mass1=ia_masses)
-                        ia += 1                        
+                        ia += 1
                     shift += molmap[0] # shift index values by number of AA indices in CG molecule type i
 
             #mapping.Print()
@@ -482,26 +479,6 @@ class SimExporter():
         return 
     
 
-    def AddOptConstraints(self, Opt):
-
-        for entry in self.OptConstraints:
-            param_list = []
-            for _n in entry[1]:
-                if _n in Opt.Names:
-                    for i in range(len(Opt.Names)):
-                        if Opt.Names[i] == _n:
-                            param_list.append(i)
-                else:
-                    Warning(f'{_n} is not an existing parameter')
-
-            if entry[0] == 'Equals':
-                print(param_list)
-                Opt.ConstrainEquals(param_list)
-                print(f'\n... Adding equality constraint between {[Opt.Names[i] for i in param_list]}')
-
-        return
-
-
     def CreateOptimizer(self):
 
         print('\n========== Making optimizer ==========')
@@ -565,8 +542,6 @@ class SimExporter():
                 self.EstimateAngleParameters(Optimizer)
             if self.SplineEstimate:
                 self.EstimateSplineParameters(Optimizer)
-            if self.OptConstraints:
-                self.AddOptConstraints(Optimizer)
 
             self.Opt_dict[Opt_name] = Optimizer
 
@@ -577,7 +552,7 @@ class SimExporter():
             print('NMol: {}'.format(Optimizer.ModSys.NMol))
             print('NAtom: {}'.format(Optimizer.ModSys.NAtom))
             print('NDOF: {}'.format(Optimizer.ModSys.NDOF))
-            print('Verbose: {}'.format(Optimizer.Verbose))    
+            print('Verbose: {}'.format(Optimizer.Verbose))     
 
         return 
 
