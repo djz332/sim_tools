@@ -16,9 +16,10 @@ class SimExporter():
         self.MapOp='COM' 
         self.ForceFieldFile=None
         self.Bmin=None
-        self.Electrostatics=False
+        self.Ewald=False
         self.NeutralSrel=False 
         self.Coef=1.0
+        self.BornA=1.0
         self.Shift=True
         self.rcut=1.0
         self.Temp=1.0
@@ -41,8 +42,8 @@ class SimExporter():
 
         # initialize default empty arrays
         self.AtomTypes, self.MolTypes, self.Bonds = [], [], []
-        self.PBonds, self.PAngles, self.PNonbonded, self.PElectrostatic, self.PExternal = [], [], [], [], []
-        self.Systems, self.Trajectories, self.Optimizers, self.InitialPositions, self.Runs = [], [], [], [], []
+        self.PBonds, self.PAngles, self.PNonbonded, self.PElectrostatics, self.PExternal = [], [], [], [], []
+        self.Systems, self.Trajectories, self.Optimizers, self.InitialPositions, self.TrajMasses, self.Runs = [], [], [], [], [], []
         self.MeasuresRee2, self.MeasuresRee, self.MeasuresArea, self.Penalties = [], [], [], []
 
 
@@ -81,7 +82,7 @@ class SimExporter():
             self.Sys_dict[entry[0]] = Sys
 
             # ElecSys: system with Ewald on that is used to run MD, used to speed up when only optimizing non-charged interactions for speed up
-            if  self.Electrostatics and self.NeutralSrel: 
+            if  self.Ewald and self.NeutralSrel: 
                 #ElecSys = copy.deepcopy(Sys) 
                 #ElecSys.name = 'ElecSys_{}'.format(Sys.name)
                 ElecSys = sim.system.System(World, Name = 'ElecSys_{}'.format(Sys.Name))
@@ -168,25 +169,25 @@ class SimExporter():
                     P = sim.potential.PairSpline(Sys, Label=Label, Cut=self.rcut, NKnot=NKnot, Filter=atomtypes)
                     P.Fixed = nonbonded[3]
                     Sys.ForceField.append(P)
-
-            #electrostatic potentials 
-            if self.Electrostatics: #turn on ewald summation and smeared coulumb 
-                if (self.NeutralSrel and 'ElecSys_' in Sys.Name) or self.NeutralSrel == False:
-                    print('\n...Setting up Ewald summation with Bjerrum length: {} nm for {}'.format(Coef, Sys.Name))
-                    P = sim.potential.Ewald(Sys, ExcludeBondOrd=0, Cut=self.rcut, Shift=self.Shift, Coef=Coef, FixedCoef=True, Label='ewald')
+  
+            if (self.NeutralSrel and 'ElecSys_' in Sys.Name) or self.NeutralSrel == False:
+                if self.Ewald: #turn on ewald summation and smeared coulumb 
+                    print('\n...Setting up Ewald summation with Bjerrum length {} nm for {}'.format(self.Coef, Sys.Name))
+                    P = sim.potential.Ewald(Sys, ExcludeBondOrd=self.MinBondOrd, Cut=self.rcut, Shift=self.Shift, Coef=self.Coef, FixedCoef=True, Label='ewald')
+                    P.Coef.Fixed = True
                     Sys.ForceField.append(P)
-
-                    for elec in self.PElectrostatic:
-                        atomtypes = sim.atomselect.PolyFilter([self.atoms_dict[elec[1][0]], self.atoms_dict[elec[1][1]]])
-                        if elec[0] == 'smearedcoulomb':
-                            Label = 'smeared_corr_{}_{}'.format(elec[1][0], elec[1][1])
-                            Coef=elec[2][0]
-                            BornA=elec[2][1]
-                            #print(Coef,BornA)
-                            P = sim.potential.SmearedCoulombEwCorr(Sys, Label=Label, Filter=atomtypes, Cut=self.rcut, Coef=Coef, BornA=BornA, Shift=self.Shift)
-                            P.FixedCoef = elec[3][0]
-                            P.FixedBornA = elec[3][1]
-                            Sys.ForceField.append(P)
+                
+                #electrostatic potentials    
+                for elec in self.PElectrostatics:
+                    atomtypes = sim.atomselect.PolyFilter([self.atoms_dict[elec[1][0]], self.atoms_dict[elec[1][1]]])
+                    if elec[0] == 'smearedcoulomb':
+                        Label = 'smeared_corr_{}_{}'.format(elec[1][0], elec[1][1])
+                        Coef = elec[2][0]
+                        BornA = elec[2][1]
+                        P = sim.potential.SmearedCoulombEwCorr(Sys, Label=Label, Filter=atomtypes, Cut=self.rcut, Coef=Coef, BornA=BornA, Shift=self.Shift)
+                        P.Coef.Fixed = elec[3][0]
+                        P.BornA.Fixed = elec[3][1]
+                        Sys.ForceField.append(P)                                
                 
             #external potentials
             for external in self.PExternal:
@@ -195,7 +196,7 @@ class SimExporter():
                     Label = 'ext_gauss_{}_{}'.format(external[1][0], external[1][1])
                     B = external[2][0]
                     Kappa = external[2][1]
-                    P = sim.potential.Gaussian(Sys, Label=Label, Filter=atomtypes, Cut=self.rcut, B=B, Kappa=Kappa, Dist0=0.0, Shift=True)
+                    P = sim.potential.Gaussian(Sys, Label=Label, Filter=atomtypes, Cut=self.rcut, B=B, Kappa=Kappa, Dist0=0.0, Shift=self.Shift)
                     P.Param.Min = None
                     P.B.Fixed = True
                     P.Kappa.Fixed = True
@@ -227,6 +228,8 @@ class SimExporter():
             print('\nForce field for {}: '.format(Sys_name))
             for P in Sys.ForceField:
                 print(P.Label)
+                #if ('smeared_corr' in  P.Label):
+                #    print(P.Coef.Fixed)
 
         return 
 
@@ -289,10 +292,13 @@ class SimExporter():
 
         system_traj_dict = {}
         trajfile_dict = {}
+        traj_masses_dict = {}
         for Opt_entry in self.Optimizers:
             system_traj_dict[Opt_entry[1]] = Opt_entry[2]
         for traj_entry in self.Trajectories:
             trajfile_dict[traj_entry[0]] = [traj_entry[1],traj_entry[2]]
+        for traj_masses_entry in self.TrajMasses:
+            traj_masses_dict[traj_entry[0]] = np.load(traj_masses_entry[1])
 
         for Sys_entry in self.Systems:
             if self.MapOp=='COM':
@@ -302,7 +308,10 @@ class SimExporter():
                     masses=None
                 else:
                     traj = md.load(trajfile_dict[traj_name][0], top=trajfile_dict[traj_name][1])
-                    masses = np.array([a.element.mass for a in traj.top.atoms])
+                    if traj_name in traj_masses_dict.keys():
+                        masses = traj_masses_dict[traj_name]
+                    else:
+                        masses = np.array([a.element.mass for a in traj.top.atoms])
                     #print(masses)
                     if (np.sum(masses)==np.nan or np.sum(masses)==0.0): 
                         Warning('Atom masses include nan or are all 0.0 ... defaulting to centroid mapping')
@@ -331,6 +340,7 @@ class SimExporter():
                             ia_masses = None
                        
                         mapping.Add(Atoms1=aa_indices, Atom2=atom, Mass1=ia_masses)
+                        #print(ia_masses)
                         ia += 1                        
                     shift += molmap[0] # shift index values by number of AA indices in CG molecule type i
 
@@ -340,7 +350,7 @@ class SimExporter():
         return
     
 
-    def DepreciatedCreateMapping(self):
+    def CreateMappingDepreciated(self):
         
         print('\n========== Creating Atom Maps ==========')
 
@@ -488,14 +498,18 @@ class SimExporter():
             param_list = []
             for _n in entry[1]:
                 if _n in Opt.Names:
+                    #print(_n)
                     for i in range(len(Opt.Names)):
                         if Opt.Names[i] == _n:
                             param_list.append(i)
                 else:
                     Warning(f'{_n} is not an existing parameter')
 
+            if len(param_list) < 2:
+                Warning(f'Parmeter list for {entry[0]} constraint is too short... skipping')
+                return
+            
             if entry[0] == 'Equals':
-                print(param_list)
                 Opt.ConstrainEquals(param_list)
                 print(f'\n... Adding equality constraint between {[Opt.Names[i] for i in param_list]}')
 
@@ -544,7 +558,7 @@ class SimExporter():
             #if traj.FrameData.get("BoxL", None) is not None: UseTrajBoxL=True
             #else: UseTrajBoxL=False
 
-            if self.Electrostatics and self.NeutralSrel: ElecSys = self.Sys_dict['ElecSys_{}'.format(Sys_name)]
+            if self.Ewald and self.NeutralSrel: ElecSys = self.Sys_dict['ElecSys_{}'.format(Sys_name)]
             else: ElecSys = None
             Optimizer = OptClass(ModSys=Sys, Map=mapping, Traj=traj, 
                 FilePrefix=Opt_entry[3], LoadArgData=True, Verbose=True, UseTrajBoxL=True, ElecSys=ElecSys)
@@ -577,7 +591,9 @@ class SimExporter():
             print('NMol: {}'.format(Optimizer.ModSys.NMol))
             print('NAtom: {}'.format(Optimizer.ModSys.NAtom))
             print('NDOF: {}'.format(Optimizer.ModSys.NDOF))
-            print('Verbose: {}'.format(Optimizer.Verbose))    
+            print('Verbose: {}'.format(Optimizer.Verbose)) 
+            #for n,f in zip(Optimizer.ModSys.ForceField.Param.Names, Optimizer.ModSys.ForceField.Param.Fixed):
+            #    print(f'{n} {f}')
 
         return 
 
