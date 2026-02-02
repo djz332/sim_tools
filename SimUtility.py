@@ -16,6 +16,11 @@ class SimExporter():
         self.MapOp='COM' 
         self.ForceFieldFile=None
         self.Bmin=None
+        self.Bmax=None
+        self.asqmin=None
+        self.asqmax=None
+        self.Kappamin=None
+        self.Kappamax=None
         self.Ewald=False
         self.NeutralSrel=False 
         self.Coef=1.0
@@ -150,9 +155,9 @@ class SimExporter():
 
             #nonbonded interactions
             for nonbonded in self.PNonbonded:
-                atomtypes = sim.atomselect.PolyFilter([self.atoms_dict[nonbonded[1][0]], self.atoms_dict[nonbonded[1][1]]], MinBondOrd=self.MinBondOrd)
                 
                 if nonbonded[0] == 'gaussian':
+                    atomtypes = sim.atomselect.PolyFilter([self.atoms_dict[nonbonded[1][0]], self.atoms_dict[nonbonded[1][1]]], MinBondOrd=self.MinBondOrd)
                     Label = 'gauss_{}_{}'.format(nonbonded[1][0], nonbonded[1][1])
                     B =  nonbonded[2][0]
                     Kappa = nonbonded[2][1]
@@ -160,21 +165,45 @@ class SimExporter():
                     P.B.Fixed = nonbonded[3][0]
                     P.Kappa.Fixed = nonbonded[3][1]
                     P.Dist0.Fixed = True
-                    P.Param.Min = self.Bmin
+                    P.B.Min = self.Bmin
+                    P.B.Max = self.Bmax
+                    P.Kappa.Min = self.Kappamin
                     Sys.ForceField.append(P)
 
                 elif nonbonded[0] == 'pairspline':
+                    atomtypes = sim.atomselect.PolyFilter([self.atoms_dict[nonbonded[1][0]], self.atoms_dict[nonbonded[1][1]]], MinBondOrd=self.MinBondOrd)
                     Label = 'spline_{}_{}'.format(nonbonded[1][0], nonbonded[1][1])
                     NKnot =  nonbonded[2]
                     P = sim.potential.PairSpline(Sys, Label=Label, Cut=self.rcut, NKnot=NKnot, Filter=atomtypes)
                     P.Fixed = nonbonded[3]
                     Sys.ForceField.append(P)
-  
+            
+                elif nonbonded[0] == 'gaussian0combine':
+                    #atomtypes = sim.atomselect.PolyFilter([self.atoms_dict.values], MinBondOrd=self.MinBondOrd)
+                    NType, TypeAIDs, TypeLabels = Sys.World.GetPairTypes()
+                    print('\n...Flattened array of atom types:', Sys.World.AtomTypes)
+                    print('\n...Flattened array of interaction labels:', TypeLabels)
+                    atomtypes = sim.atomselect.PolyFilter(Filters = [sim.atomselect.All, sim.atomselect.All], MinBondOrd=self.MinBondOrd)
+                    Label = f'gausscomb_{nonbonded[1][0]}'
+                    asq = np.asarray(nonbonded[2][0])
+                    b = np.asarray(nonbonded[2][1])
+                    P = sim.potential.Gaussian0Combine(Sys, Label=Label, Cut=self.rcut, asq=asq, b=b, Filter=atomtypes, Shift=True)
+                    P.asq.Fixed = np.asarray(nonbonded[3][0])
+                    P.b.Fixed = np.asarray(nonbonded[3][1])
+                    P.asq.Min = self.asqmin           
+                    P.asq.Max = self.asqmax
+                    P.b.Min = self.Bmin
+                    P.b.Max = self.Bmax
+                    Sys.ForceField.append(P)
+
             if (self.NeutralSrel and 'ElecSys_' in Sys.Name) or self.NeutralSrel == False:
                 if self.Ewald: #turn on ewald summation and smeared coulumb 
                     print('\n...Setting up Ewald summation with Bjerrum length {} nm for {}'.format(self.Coef, Sys.Name))
                     P = sim.potential.Ewald(Sys, ExcludeBondOrd=self.MinBondOrd, Cut=self.rcut, Shift=self.Shift, Coef=self.Coef, FixedCoef=True, Label='ewald')
-                    P.Coef.Fixed = True
+                    if self.NeutralSrel:
+                        P.Coef.Fixed = True
+                    else:
+                        P.Coef.Fixed = False
                     Sys.ForceField.append(P)
                 
                 #electrostatic potentials    
@@ -558,8 +587,11 @@ class SimExporter():
             #if traj.FrameData.get("BoxL", None) is not None: UseTrajBoxL=True
             #else: UseTrajBoxL=False
 
-            if self.Ewald and self.NeutralSrel: ElecSys = self.Sys_dict['ElecSys_{}'.format(Sys_name)]
-            else: ElecSys = None
+            if self.Ewald and self.NeutralSrel: 
+                ElecSys = self.Sys_dict['ElecSys_{}'.format(Sys_name)]
+            else: 
+                ElecSys = None
+
             Optimizer = OptClass(ModSys=Sys, Map=mapping, Traj=traj, 
                 FilePrefix=Opt_entry[3], LoadArgData=True, Verbose=True, UseTrajBoxL=True, ElecSys=ElecSys)
             Optimizer.StepsEquil = self.StepsEquil
@@ -567,11 +599,14 @@ class SimExporter():
             Optimizer.StepsStride = self.StepsStride
             Optimizer.HessianAdjustMode = self.HessianAdjustMode
             Optimizer.MinReweightFrac = self.MinReweightFrac
+            if self.Ewald and not self.NeutralSrel:
+                Optimizer.UseTarHists = False
             if Opt_name in RefPos_dict:
                 Optimizer.UserRefPos = RefPos_dict[Opt_name] 
             #Optimizer.UseHessian = False
 
-            if self.Runs[0][1] != 3: Optimizer.ParseTarData() 
+            if self.Runs[0][1] != 3 and Optimizer.UseTarHists == True: 
+                Optimizer.ParseTarData() 
 
             if self.BondEstimate:
                 self.EstimateBondParameters(Optimizer)
